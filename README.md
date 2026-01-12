@@ -1,41 +1,87 @@
-# 项目作业：大语言模型记忆功能的设计与实现
+# LLM-Memory-Research
 
-## 背景
+面向长程记忆与检索的实验框架，包含滑动窗口、标准 RAG 与 NSCMA 三种方案，并提供合成数据的知识更新与多跳推理评测。
 
-大语言模型（Large Language Models, LLMs）在当前的人工智能应用中展现出强大的能力，但它们本质上是无状态的系统。这意味着：
-- 每次接收到prompt时，模型都会独立生成回复
-- 不会自动参考用户的历史对话内容
-- 无法记住用户表达过的偏好、背景信息或历史交互
-- 缺乏持续学习和上下文积累的能力
-- 
-这种无状态特性限制了模型在实际应用中的效果。例如，用户需要在每次对话中重复提供相同的背景信息，模型无法根据用户的历史行为进行个性化响应；模型之前犯过的错，如果反馈没有加入记忆，下一次还是会重复犯错。
+- Baselines: SlidingWindow, StandardRAG
+- Ours: NSCMA（Neural-Search + Curated-Graph + Memory-Aware），结合向量检索与语义图谱，支持策展更新
 
-现在有很多方法试图为大语言模型加上记忆模块，例如基于将历史消息拼接到提示词中、检索增强生成、cheatsheet（[Dynamic Cheatsheet: Test-Time Learning with Adaptive Memory](https://arxiv.org/abs/2504.07952)）、新的模型架构（[Titans: Learning to Memorize at Test Time](https://arxiv.org/abs/2501.00663)）等等。基于上下文的记忆模式也带来了问题：当记忆信息太多时，会影响模型的推理速度，还可能引入无关信息。为了解决这个问题，上下文滑动窗口限制了上下文的长度，只看最近的记忆。此外还有很多其他的记忆管理方式。
+## 目录结构
+- config.py: 全局配置（模型、硬件与实验参数）
+- models.py: ModelEngine，集成 Transformers 与 Sentence-Transformers，4-bit 量化推理
+- data_loader.py: 合成数据生成（知识更新、多跳推理）
+- memory_systems.py: 三种记忆系统实现（SlidingWindow/StandardRAG/NSCMA）
+- main.py: 实验入口（可运行三类实验）
+- requirements.txt: 依赖列表
 
+## 环境与安装
+- Python 3.10+
+- 可选 GPU（建议 12GB+，4-bit 量化可在更小显存上运行）
+- CUDA/驱动需与 PyTorch 匹配
 
-![上下文管理滑动窗口。窗口的起始是系统提示词和上一次的思考token，这两个引导了接下来的Image-action对生成；接着是Image-action对。设置一个窗口大小threshold，如果Image-action对超过了这个threshold，就移除最前面的，保留最近生成的（FIFO原则）。当遇到下一次思考时，替换上一次思考token。这样维持了一个大小为threshold的滑动窗口，作为上下文记忆。](img/context.png)
+```bash
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# Linux/Mac
+source .venv/bin/activate
 
-## 实施步骤
+pip install -r requirements.txt
+```
 
-你可以按照以下步骤开展研究：
-1.	理解大语言模型记忆功能为什么是重要的？记忆模块的设计和实现面临哪些挑战？
-2.	调研当前主流的记忆功能实现方案，这些方案分别是基于什么的，分为几大类？不同记忆机制的优劣和适用场景分别是什么？
-3.	设计实现一个集成记忆功能的LLM/Agent
-4.	评估你实现的记忆模块和其他记忆机制的差异，这里可以设计对比实验(评估指标可以参考现有文献)
-5.	分析你得到的实验结果，推荐使用wandb可视化分析工具；必要时可以设计消融实验。我们鼓励大胆地尝试，实验结果不是sota没关系，重要的是分析结果产生的原因，可以记录失败的尝试~
+若 bitsandbytes 在 Windows 上异常，可尝试 WSL/Ubuntu 或改用 CPU（见下文“配置”）。
 
-### 评分标准
+## 配置
+编辑 config.py：
+- LLM_MODEL_ID: 默认 Qwen/Qwen2.5-7B-Instruct
+- EMBEDDING_MODEL_ID: 默认 BAAI/bge-m3
+- DEVICE: "cuda" 或 "cpu"
+- LOAD_IN_4BIT: 是否 4-bit 量化加载
+- MAX_NEW_TOKENS: 生成长度
+- TEST_SAMPLE_LIMIT: 每个实验的数据条数
+- RAG_TOP_K: RAG 检索条数
+- SURPRISE_THRESHOLD: NSCMA 的“惊奇度”阈值
 
-**总分：100 分**
+示例（CPU 跑通优先）：
+- DEVICE="cpu"
+- LOAD_IN_4BIT=False
 
-| 评分项 | 分值 | 评分细则 |
-| --- | --- | --- |
-| **文献调研** | 25分 | 报告中的Introduction和Related work 部分的全面性(15分)、分析的深度(10分) |
-| **方法实现** | 34分 | 方法创新性(10分)、代码质量(12分)、技术难度(12分) |
-| **实验评估** | 26分 | 实验设计合理性(10分)、结果分析深刻程度(10分)、优秀的图表展示(6分) |
-| **报告撰写** | 15分 | 逻辑清晰(5分)、表达准确(5分)、格式规范(5分) |
+## 运行
+默认运行消融实验（Experiment 3）：
+```bash
+python main.py
+```
 
+其他实验（在 main.py 中按需启用/注释）：
+- Experiment 1: 变长干扰下的知识更新鲁棒性
+- Experiment 2: 多跳推理（含长距离噪音）
 
-### 四、 参考资料
+输出
+- 控制台打印各系统准确率与运行耗时
+- Experiment 1 额外保存 exp1_results.json
 
-【wandb 教程】 [https://docs.wandb.ai/models/quickstart](https://docs.wandb.ai/models/quickstart)
+## 方法说明
+- SlidingWindow: 维护固定窗口文本上下文，简单高效但易被长噪声“冲走”信息
+- StandardRAG: Chroma 向量库检索，Sentence-Transformers 编码，Top-K 拼接回答
+- NSCMA:
+  - Neural Buffer: 依据“惊奇度”筛选增量信息
+  - Vector Store: Chroma 向量检索兜底
+  - Semantic Graph: 使用 NetworkX 构建实体关系，节点标准化防断连
+  - Curator: 同一主体下相似关系的新事实覆盖旧事实
+  - Query: 图谱路径增强 + 向量检索回退，动态 Prompt 选择
+
+## 数据生成
+- generate_synthetic_update: 植入“旧事实→噪音→新事实→噪音”，考察记忆更新与干扰鲁棒性
+- generate_synthetic_multihop: 逆序+噪音的三跳链路（Object→Container→Room→Building）
+
+## 性能与内存
+- 生成阶段强制截断输入至 1024 tokens，减小显存峰值
+- 使用 torch.cuda.empty_cache() 回收显存碎片
+- 4-bit 量化建议搭配半精度计算（nf4 + float16）
+
+## 故障排除
+- bitsandbytes 报错：使用 WSL/Ubuntu 或切换 CPU（LOAD_IN_4BIT=False, DEVICE="cpu"）
+- 显存不足：降低 MAX_NEW_TOKENS、RAG_TOP_K；确保输入截断；缩小 TEST_SAMPLE_LIMIT
+- 模型下载失败：检查网络/HF 镜像；提前手动下载模型权重
+
+## 免责声明
+本仓库仅用于研究用途。请遵循相应模型与依赖的许可证与使用条款。
